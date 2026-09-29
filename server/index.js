@@ -48,7 +48,3 @@ app.get('/', (req, res) => {
 app.listen(Port, () => {
     console.log(`Server Startet at ${Port}`)
 })
-
-
-
-stories - visible - followers

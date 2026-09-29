@@ -59,13 +59,23 @@ export const createStory = async (req, res) => {
     }
 }
 
-// stories - visible - followers
-// Get Stories
 
-export const getStories = (req , res)=>{
+// Logged In user - follwings - story - visible
+
+export const getStories = async (req, res) => {
     try {
-        
-    } catch (error) {
-        
+        // allowedUsers
+        let allowedUsers = [req.user._id, ...(req.user.followings) || []]
+
+        const stories = await Story.find({
+            author: { $in: allowedUsers },
+            expiresAt: { $gt: new Date() }
+        }).sort({ createdAt: -1 }).populate('author', "profileImage username")
+
+
+        res.status(200).json({ message: "Stories fetched", stories: stories })
+
+} catch (error) {
+        return res.status(500).json({ message: 'Internal Server Error', error: error })
     }
 }

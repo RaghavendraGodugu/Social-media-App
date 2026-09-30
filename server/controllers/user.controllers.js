@@ -76,6 +76,14 @@ export const getMe = async (req, res) => {
     return res.status(200).json(sanitizeUser(req.user))
 }
 
+export const logoutUser = async (req, res) => {
+    res.clearCookie('token', {
+        httpOnly: true
+    })
+
+    return res.status(200).json({ message: 'User Logged Out' })
+}
+
 export const getUserProfile = async (req, res) => {
     try {
         const { username } = req.params

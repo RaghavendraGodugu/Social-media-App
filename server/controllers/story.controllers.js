@@ -9,24 +9,18 @@ const STORY_LIFETIME = 24 * 60 * 60 * 1000 // 24hrs - ms
 export const createStory = async (req, res) => {
     try {
 
-        const { caption } = req.body
-
-        let image;
-
+        const caption = req.body.caption?.trim()
 
         if (!caption || !req.file) {
-            res.status(400).json({ message: "Add a Caption or an Image" })
+            return res.status(400).json({ message: "Add an image and a caption" })
         }
 
         if (caption.length > 200) {
-            res.status(400).json({ message: "Caption Cannote be Greate than 500 characters" })
+            return res.status(400).json({ message: "Caption cannot be greater than 200 characters" })
         }
 
-
-        if (req.file) {
-            const uploadedImage = await uploadToCloudinary(req.file.buffer)
-            image = uploadedImage.secure_url
-        }
+        const uploadedImage = await uploadToCloudinary(req.file.buffer)
+        const image = uploadedImage.secure_url
 
 
         const newStory = await Story.create({
@@ -36,8 +30,6 @@ export const createStory = async (req, res) => {
             expiresAt: new Date(Date.now() + STORY_LIFETIME)
 
         })
-
-        console.log(newStory)
 
         await User.findByIdAndUpdate(req.user._id, {
             $push: { stories: newStory._id }
@@ -52,10 +44,10 @@ export const createStory = async (req, res) => {
 
 
 
-        res.status(201).json({ message: "Story Created ", story: populatedStoryData })
+        return res.status(201).json({ message: "Story Created ", story: populatedStoryData })
 
     } catch (error) {
-        return res.status(500).json({ message: 'Internal Server Error', error: error })
+        return res.status(500).json({ message: 'Internal Server Error', error: error.message })
     }
 }
 
@@ -65,7 +57,7 @@ export const createStory = async (req, res) => {
 export const getStories = async (req, res) => {
     try {
         // allowedUsers
-        let allowedUsers = [req.user._id, ...(req.user.followings) || []]
+        const allowedUsers = [req.user._id, ...(req.user.followings || [])]
 
         const stories = await Story.find({
             author: { $in: allowedUsers },
@@ -73,9 +65,9 @@ export const getStories = async (req, res) => {
         }).sort({ createdAt: -1 }).populate('author', "profileImage username")
 
 
-        res.status(200).json({ message: "Stories fetched", stories: stories })
+        return res.status(200).json({ message: "Stories fetched", stories })
 
 } catch (error) {
-        return res.status(500).json({ message: 'Internal Server Error', error: error })
+        return res.status(500).json({ message: 'Internal Server Error', error: error.message })
     }
 }

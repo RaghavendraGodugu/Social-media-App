@@ -69,3 +69,41 @@ export const getAllReels = async (req, res) => {
         return res.status(500).json({ message: 'Internal Server Error', error: error.message });
     }
 };
+
+
+
+
+export const toggleReelLike = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const reel = await Reel.findById(req.params.id);
+
+        if (!reel) {
+            return res.status(404).json({ message: "Reel not found" });
+        }
+
+        const isAlreadyLiked = reel.likes.some(
+            (id) => id.toString() === userId.toString()
+        );
+
+        if (isAlreadyLiked) {
+            reel.likes.pull(userId);
+        } else {
+            reel.likes.push(userId);
+        }
+
+        await reel.save();
+
+        return res.status(200).json({
+            message: isAlreadyLiked ? "Reel Unliked" : "Reel Liked",
+            liked: !isAlreadyLiked,
+            likesCount: reel.likes.length,
+            likes: reel.likes
+        });
+    } catch (error) {
+        return res.status(500).json({
+            message: "Internal Server Error",
+            error: error.message
+        });
+    }
+};

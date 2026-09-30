@@ -105,3 +105,28 @@ export const toggleLike = async (req, res) => {
         return res.status(500).json({ message: 'Internal Server Error', error: error.message });
     }
 };
+
+
+export const getPostsByUsername = async (req, res) => {
+    try {
+        const user = await User.findOne({ username: req.params.username }).select("_id");
+
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        const posts = await Post.find({ author: user._id })
+            .populate("author", "name username profileImage")
+            .sort({ createdAt: -1 });
+
+        return res.status(200).json({
+            message: "User posts fetched successfully",
+            posts
+        });
+    } catch (error) {
+        return res.status(500).json({
+            message: "Internal Server Error",
+            error: error.message
+        });
+    }
+};

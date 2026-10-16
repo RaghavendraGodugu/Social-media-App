@@ -1,3 +1,4 @@
+
 import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
@@ -19,57 +20,108 @@ import errorMiddleware from "./middlewares/error.middleware.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// --------------------------------------------------
+// 1. Load environment variables
+// --------------------------------------------------
+
 dotenv.config({
-    path: path.join(__dirname, ".env")
+    path: path.join(__dirname, ".env"),
 });
 
-// Normalize environment variables for casing consistency
-process.env.dbUrl = process.env.dbUrl || process.env.dbURL || process.env.MONGO_URI;
-process.env.dbURL = process.env.dbUrl;
-process.env.JWT_SECRET = process.env.JWT_SECRET || process.env.jwt_secret, { expiresIn: "7d" };
-process.env.jwt_secret = process.env.JWT_SECRET, { expiresIn: "7d" };
+// Normalize environment variable names.
+process.env.dbUrl =
+    process.env.dbUrl ||
+    process.env.dbURL ||
+    process.env.MONGO_URI;
+
+process.env.JWT_SECRET =
+    process.env.JWT_SECRET ||
+    process.env.jwt_secret;
 
 const requiredEnvVars = [
     "dbUrl",
-    "jwt_secret",
+    "JWT_SECRET",
     "CLOUDINARY_CLOUD_NAME",
     "CLOUDINARY_API_KEY",
-    "CLOUDINARY_API_SECRET"
+    "CLOUDINARY_API_SECRET",
 ];
 
-const missingEnvVars = requiredEnvVars.filter((key) => !process.env[key]);
+const missingEnvVars = requiredEnvVars.filter(
+    (key) => !process.env[key]
+);
 
 if (missingEnvVars.length > 0) {
-    console.error(`Missing required environment variables: ${missingEnvVars.join(", ")}`);
+    console.error(
+        `Missing required environment variables: ${missingEnvVars.join(", ")}`
+    );
     process.exit(1);
 }
+
+// --------------------------------------------------
+// 2. Initialize Express and HTTP server
+// --------------------------------------------------
 
 const app = express();
 const httpServer = createServer(app);
 
-const corsOriginHandler = (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, curl, or server-to-server)
-    if (!origin) return callback(null, true);
-    if (
-        origin.startsWith("https://social-media-app-psi-gilt.vercel.app/") ||
-        origin.startsWith("http://127.0.0.1:")
-    ) {
-        return callback(null, true);
-    }
-    return callback(null, true);
+const port = process.env.PORT || 8084;
+
+// Render terminates HTTPS at its proxy.
+if (process.env.NODE_ENV === "production") {
+    app.set("trust proxy", 1);
+}
+
+// --------------------------------------------------
+// 3. Configure CORS
+// --------------------------------------------------
+
+const allowedOrigins = new Set([
+    "https://social-media-app-psi-gilt.vercel.app",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]);
+
+const corsOptions = {
+    origin(origin, callback) {
+        // Requests without an Origin header, such as curl.
+        if (!origin) {
+            return callback(null, true);
+        }
+
+        if (allowedOrigins.has(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(new Error(`Origin not allowed by CORS: ${origin}`));
+    },
+    credentials: true,
+    methods: [
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+    ],
+    allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+    ],
 };
 
+// --------------------------------------------------
+// 4. Configure Socket.IO
+// --------------------------------------------------
+
 const io = new Server(httpServer, {
-    cors: {
-        origin: corsOriginHandler,
-        credentials: true
-    }
+    cors: corsOptions,
 });
 
-// Make io accessible across all Express routes/controllers
 app.set("io", io);
 
 io.on("connection", (socket) => {
+    console.log("Socket connected:", socket.id);
+
     socket.on("join_user", (userId) => {
         if (userId) {
             socket.join(userId.toString());
@@ -77,40 +129,33 @@ io.on("connection", (socket) => {
     });
 
     socket.on("disconnect", () => {
-        // user disconnected
+        console.log("Socket disconnected:", socket.id);
     });
 });
 
-const port = process.env.PORT || 8084;
+// --------------------------------------------------
+// 5. Register middleware BEFORE routes
+// --------------------------------------------------
 
-// Connect to MongoDB with timeout and fallback to local MongoDB if Atlas IP is blocked
-const connectDatabase = async () => {
-    const primaryUri = process.env.dbUrl || process.env.dbURL;
-    const localUri = "mongodb://127.0.0.1:27017/social_media_app";
-
-    try {
-        await mongoose.connect(primaryUri, { serverSelectionTimeoutMS: 5000 });
-        console.log("Connected to primary MongoDB");
-    } catch (err) {
-        console.warn(`Primary MongoDB connection failed (${err.message}). Attempting fallback to local MongoDB...`);
-        try {
-            await mongoose.connect(localUri, { serverSelectionTimeoutMS: 5000 });
-            console.log("Connected to local MongoDB (mongodb://127.0.0.1:27017/social_media_app)");
-        } catch (localErr) {
-            console.error("Failed to connect to both primary and local MongoDB:", localErr.message);
-        }
-    }
-};
-
-connectDatabase();
-
-app.use(cors({
-    origin: corsOriginHandler,
-    credentials: true
-}));
-
+app.use(cors(corsOptions));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+// --------------------------------------------------
+// 6. Health check
+// --------------------------------------------------
+
+app.get("/", (req, res) => {
+    res.status(200).json({
+        success: true,
+        message: "Social Media API is running",
+    });
+});
+
+// --------------------------------------------------
+// 7. API routes
+// --------------------------------------------------
 
 app.use("/users", userRoutes);
 app.use("/posts", postRoutes);
@@ -119,9 +164,44 @@ app.use("/comments", commentRoutes);
 app.use("/stories", storyRoutes);
 app.use("/notifications", notificationRoutes);
 
+// --------------------------------------------------
+// 8. Error-handling middleware (must be last)
+// --------------------------------------------------
+
 app.use(errorMiddleware);
 
+// --------------------------------------------------
+// 9. MongoDB connection
+// --------------------------------------------------
 
-httpServer.listen(port, () => {
-    console.log(`Server Started at ${port}`);
-});
+const connectDatabase = async () => {
+    try {
+        await mongoose.connect(process.env.dbUrl, {
+            serverSelectionTimeoutMS: 10000,
+        });
+
+        console.log("Connected to MongoDB successfully");
+    } catch (error) {
+        console.error("MongoDB connection failed:", error.message);
+        process.exit(1);
+    }
+};
+
+// --------------------------------------------------
+// 10. Start server after database connection
+// --------------------------------------------------
+
+const startServer = async () => {
+    try {
+        await connectDatabase();
+
+        httpServer.listen(port, () => {
+            console.log(`Server started on port ${port}`);
+        });
+    } catch (error) {
+        console.error("Server startup failed:", error.message);
+        process.exit(1);
+    }
+};
+
+startServer();

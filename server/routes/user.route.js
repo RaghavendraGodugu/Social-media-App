@@ -1,23 +1,37 @@
-import express from 'express'
-import { followUser, getMe, getUserProfile, loginUser, logoutUser, registerUser, unfollowUser, updateProfile } from '../controllers/user.controllers.js'
-import { isAuthenticated } from '../middlewares/authMiddleware.js'
-import upload from '../middlewares/upload.middlerware.js'
+import express from "express";
+import {
+    registerUser,
+    loginUser,
+    logoutUser,
+    getMe,
+    getUserProfile,
+    updateProfile,
+    followUser,
+    unfollowUser,
+    searchUsers,
+    getSuggestedUsers
+} from "../controllers/user.controllers.js";
+import isAuthenticated from "../middlewares/authMiddleware.js";
+import upload from "../middlewares/upload.middlerware.js";
 
-const userRoutes = express.Router()
+const userRoutes = express.Router();
 
-userRoutes.post('/register', registerUser)
-userRoutes.post('/login', loginUser)
-userRoutes.post('/logout', logoutUser)
-userRoutes.get('/me', isAuthenticated, getMe)
-userRoutes.get('/profile/:username', isAuthenticated, getUserProfile)
+userRoutes.post("/register", registerUser);
+userRoutes.post("/login", loginUser);
+userRoutes.post("/logout", isAuthenticated, logoutUser);
+userRoutes.get("/me", isAuthenticated, getMe);
+userRoutes.get("/search", isAuthenticated, searchUsers);
+userRoutes.get("/suggestions", isAuthenticated, getSuggestedUsers);
+userRoutes.get("/profile/:username", isAuthenticated, getUserProfile);
 
-// Following and followers
-userRoutes.post('/:id/follow', isAuthenticated, followUser)
-userRoutes.delete('/:id/unfollow', isAuthenticated, unfollowUser)
+userRoutes.put(
+    "/profile",
+    isAuthenticated,
+    upload.single("profileImage"),
+    updateProfile
+);
 
-// UPDATED: Profile update follows the same API contract as Social-Media-A-2029.
-userRoutes.post('/updateProfile', isAuthenticated, upload.single('profileImage'), updateProfile)
+userRoutes.post("/:id/follow", isAuthenticated, followUser);
+userRoutes.delete("/:id/follow", isAuthenticated, unfollowUser);
 
-
-
-export default userRoutes
+export default userRoutes;

@@ -1,9 +1,9 @@
 import express from "express";
-import { isAuthenticated } from "../middlewares/authMiddleware.js";
+import isAuthenticated from "../middlewares/authMiddleware.js";
 import {
-  createComment,
-  deleteComment,
-  getComments,
+    createComment,
+    deleteComment,
+    getComments
 } from "../controllers/comment.controllers.js";
 
 const commentRoutes = express.Router();

@@ -1,73 +1,88 @@
-import Story from "../models/story.model.js";
-import User from "../models/user.model.js";
-import uploadToCloudinary from "../utils/uploadToCloudinary.js";
+// Create a Story
+
+import Story from "../models/story.model.js"
+import User from "../models/user.model.js"
+import uploadToCloudinary from "../utils/uploadToCloudinary.js"
 
 
-const STORY_LIFETIME = 24 * 60 * 60 * 1000 // 24hrs - ms
 
+
+const STORY_LIFETIME = 24 * 60 * 60 * 1000
 
 export const createStory = async (req, res) => {
     try {
 
-        const caption = req.body.caption?.trim()
+        const { caption } = req.body;
+        let image;
 
-        if (!caption || !req.file) {
-            return res.status(400).json({ message: "Add an image and a caption" })
+        if (caption && caption.length > 200) {
+            return res.status(400).json({ message: "Caption should be less than 200 characters" });
         }
 
-        if (caption.length > 200) {
-            return res.status(400).json({ message: "Caption cannot be greater than 200 characters" })
+        if (!req.file) {
+            return res.status(400).json({ message: "Image is required to create a story" });
         }
 
-        const uploadedImage = await uploadToCloudinary(req.file.buffer)
-        const image = uploadedImage.secure_url
+        const uploadedImage = await uploadToCloudinary(req.file.buffer);
+        image = uploadedImage.secure_url;
 
-
-        const newStory = await Story.create({
-            image,
-            caption,
+        const story = await Story.create({
+            caption: caption?.trim() || "",
             author: req.user._id,
+            image,
             expiresAt: new Date(Date.now() + STORY_LIFETIME)
+        });
 
-        })
+        // add story id inside user collection 
 
         await User.findByIdAndUpdate(req.user._id, {
-            $push: { stories: newStory._id }
-        })
+            $push: { stories: story._id }
+        });
 
-
-        const populatedStoryData = await Story.findById(newStory._id).populate('author', 'name username profileImage')
-
-
-
+        const populatedStory = await Story.findById(story._id)
+            .populate("author", "username profileImage");
 
 
 
-
-        return res.status(201).json({ message: "Story Created ", story: populatedStoryData })
-
-    } catch (error) {
-        return res.status(500).json({ message: 'Internal Server Error', error: error.message })
+        res.status(201).json({ message: "Story Created", story: populatedStory })
     }
+
+    catch (error) {
+        return res.status(500).json({
+            message: "Internal Server Error",
+            error: error.message
+        });
+    }
+
 }
-
-
-// Logged In user - follwings - story - visible
+// Get the Stories
 
 export const getStories = async (req, res) => {
     try {
-        // allowedUsers
+        // only get the stories of the users I am following
+        // user - req.user._id
+
         const allowedUsers = [req.user._id, ...(req.user.followings || [])]
+
 
         const stories = await Story.find({
             author: { $in: allowedUsers },
             expiresAt: { $gt: new Date() }
-        }).sort({ createdAt: -1 }).populate('author', "profileImage username")
+
+        }).sort({ createdAt: -1 }).populate("author", 'username profileImage')
 
 
-        return res.status(200).json({ message: "Stories fetched", stories })
 
-} catch (error) {
-        return res.status(500).json({ message: 'Internal Server Error', error: error.message })
+        res.status(200).json({ message: "Stories Fetched", stories: stories })
+
+    } catch (error) {
+        return res.status(500).json({
+            message: "Internal Server Error",
+            error: error.message
+        });
     }
 }
+
+
+
+// Delete a Story

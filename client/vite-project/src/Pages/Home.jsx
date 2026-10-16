@@ -1,286 +1,278 @@
-import { useState, useEffect } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useDispatch, useSelector } from "react-redux";
+import axiosInstance from "../axiosCalls/axios";
 import { useAuth } from "../context/AuthContext";
-import { axiosInstance } from "../axiosCalls/axios";
-import { useDispatch } from "react-redux";
-import { setPosts } from "../redux/postSlice";
+import {
+  addPost,
+  fetchFeedPosts,
+  updatePostLike,
+} from "../redux/postsSlice";
+import { addReel, fetchReels, updateReelLike } from "../redux/reelsSlice";
+import { addStory, fetchStories } from "../redux/storiesSlice";
+import Navbar from "../components/Navbar";
+import MobileBottomNav from "../components/MobileBottomNav";
+import SearchModal from "../components/SearchModal";
+import NotificationsPanel from "../components/NotificationsPanel";
+import { addFollowing, removeFollowing } from "../redux/authSlice";
 
-
-
-const getStories = async () => {
-  const response = await axiosInstance.get("/story/getStories");
-  return response.data.stories || [];
-};
-
-
-function Avatar({ initials, tone = "from-slate-700 to-slate-900", size = "h-11 w-11" }) {
+function Avatar({ initials, tone = "from-indigo-600 to-violet-600", size = "h-11 w-11" }) {
   return (
-    <div className={`flex ${size} shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${tone} text-xs font-bold text-white ring-2 ring-white`}>
+    <div
+      className={`flex ${size} shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${tone} text-xs font-bold text-white shadow-sm ring-2 ring-white`}
+    >
       {initials}
     </div>
   );
 }
 
+const getLikeId = (like) => like?._id || like;
+
 function Home() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [contentType, setContentType] = useState("post");
+  const dispatch = useDispatch();
+
+  // Redux state
+  const posts = useSelector((state) => state.posts.items);
+  const postsLoading = useSelector((state) => state.posts.loading);
+  const postsError = useSelector((state) => state.posts.error);
+
+  const reels = useSelector((state) => state.reels.items);
+  const reelsLoading = useSelector((state) => state.reels.loading);
+  const reelsError = useSelector((state) => state.reels.error);
+
+  const stories = useSelector((state) => state.stories.items);
+  const storyLoading = useSelector((state) => state.stories.loading);
+  const storyStoreError = useSelector((state) => state.stories.error);
+
+  const unreadCount = useSelector((state) => state.notifications.unreadCount);
+
+  // Modals state
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+
+  // Story state
+  const [storyError, setStoryError] = useState("");
+  const [storyFile, setStoryFile] = useState(null);
+  const [storyCaption, setStoryCaption] = useState("");
+  const [storyCreating, setStoryCreating] = useState(false);
+  const [activeStory, setActiveStory] = useState(null);
+
+  // Content composer state
+  const [contentType, setContentType] = useState("post"); // 'post' | 'reel'
   const [caption, setCaption] = useState("");
   const [selectedFile, setSelectedFile] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [feedItems, setFeedItems] = useState([]);
-  const [fetchingFeed, setFetchingFeed] = useState(true);
-  const [stories, setStories] = useState([]);
-  const [fetchingStories, setFetchingStories] = useState(true);
-  const [storyFormOpen, setStoryFormOpen] = useState(false);
-  const [storyCaption, setStoryCaption] = useState("");
-  const [storyFile, setStoryFile] = useState(null);
-  const [storyPreview, setStoryPreview] = useState("");
-  const [creatingStory, setCreatingStory] = useState(false);
-  const [activeStory, setActiveStory] = useState(null);
+  const [filePreview, setFilePreview] = useState("");
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createError, setCreateError] = useState("");
+
+  // Feed filter
+  const [feedFilter, setFeedFilter] = useState("all"); // 'all' | 'posts' | 'reels'
+
+  // Like & Comment interaction state
   const [openComments, setOpenComments] = useState({});
   const [commentsByItem, setCommentsByItem] = useState({});
   const [commentInputs, setCommentInputs] = useState({});
   const [commentLoading, setCommentLoading] = useState({});
+  const [likeLoading, setLikeLoading] = useState({});
   const [interactionError, setInteractionError] = useState({});
 
-  const dispatch = useDispatch()
+  // Suggested users
+  const [suggestedUsers, setSuggestedUsers] = useState([]);
+  const [followLoading, setFollowLoading] = useState({});
 
-  const getInitials = (name) =>
-    name?.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "U";
+  const fileInputRef = useRef(null);
 
-  const handleLogout = async () => {
-    await logout();
-    navigate("/login", { replace: true });
-  };
+  const getItemKey = (type, id) => `${type}-${id}`;
 
-  // Group all active stories by author so one user gets one story bubble.
-  // Keep the logged-in user's story group first.
-  const storyGroups = Object.values(
-    stories.reduce((groups, story) => {
-      const authorId = story.author?._id;
-      if (!authorId) return groups;
-
-      if (!groups[authorId]) {
-        groups[authorId] = {
-          author: story.author,
-          stories: [],
-        };
-      }
-
-      groups[authorId].stories.push(story);
-      return groups;
-    }, {})
-  )
-    .map((group) => ({
-      ...group,
-      stories: [...group.stories].sort(
-        (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
-      ),
-    }))
-    .sort((a, b) => {
-      const aIsCurrentUser = a.author?._id === user?._id;
-      const bIsCurrentUser = b.author?._id === user?._id;
-
-      if (aIsCurrentUser && !bIsCurrentUser) return -1;
-      if (!aIsCurrentUser && bIsCurrentUser) return 1;
-
-      const aLatest = a.stories[a.stories.length - 1]?.createdAt;
-      const bLatest = b.stories[b.stories.length - 1]?.createdAt;
-      return new Date(bLatest) - new Date(aLatest);
-    });
-
-  const openStoryGroup = (group) => {
-    setActiveStory({
-      group,
-      index: 0,
-    });
-  };
-
-  const showNextStory = () => {
-    if (!activeStory) return;
-
-    if (activeStory.index < activeStory.group.stories.length - 1) {
-      setActiveStory((current) => ({
-        ...current,
-        index: current.index + 1,
-      }));
-    } else {
-      setActiveStory(null);
-    }
-  };
-
-  const showPreviousStory = () => {
-    if (!activeStory || activeStory.index === 0) return;
-
-    setActiveStory((current) => ({
-      ...current,
-      index: current.index - 1,
-    }));
+  const isLikedByCurrentUser = (item) => {
+    if (!user?._id) return false;
+    return (item.likes || []).some(
+      (like) => getLikeId(like)?.toString() === user._id.toString()
+    );
   };
 
   useEffect(() => {
-    const fetchFeed = async () => {
-      try {
-        const [postsRes, reelsRes] = await Promise.all([
-          axiosInstance.get("/post/getAllPosts"),
-          axiosInstance.get("/reel/getAllReels"),
-        ]);
+    dispatch(fetchFeedPosts());
+    dispatch(fetchReels());
+    dispatch(fetchStories());
+    fetchSuggestions();
+  }, [dispatch]);
 
-        const posts = (postsRes.data.posts || []).map((post) => ({
-          ...post,
-          type: "post",
-        }));
-
-        dispatch(setPosts(posts))
-
-
-
-
-
-        const reels = (reelsRes.data.reels || []).map((reel) => ({
-          ...reel,
-          type: "reel",
-        }));
-
-        const combined = [...posts, ...reels].sort(
-          (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
-        );
-
-        setFeedItems(combined);
-      } catch (error) {
-        console.error("Error fetching feed items:", error);
-      } finally {
-        setFetchingFeed(false);
-      }
-    };
-
-    fetchFeed();
-  }, []);
-
-  const fetchStories = async () => {
+  const fetchSuggestions = async () => {
     try {
-      setStories(await getStories());
-    } catch (error) {
-      console.error("Error fetching stories:", error);
-    } finally {
-      setFetchingStories(false);
+      const res = await axiosInstance.get("/users/suggestions");
+      setSuggestedUsers(res.data.suggestions || []);
+    } catch (err) {
+      console.error("Suggestions fetch error:", err);
     }
   };
 
-  useEffect(() => {
-    let mounted = true;
+  const handleFollowSuggestion = async (targetUser) => {
+    const targetId = targetUser._id;
+    if (followLoading[targetId]) return;
 
-    getStories()
-      .then((fetchedStories) => {
-        if (mounted) setStories(fetchedStories);
-      })
-      .catch((error) => {
-        console.error("Error fetching stories:", error);
-      })
-      .finally(() => {
-        if (mounted) setFetchingStories(false);
-      });
+    const isFollowing = (user?.followings || []).some(
+      (id) => (id?._id || id)?.toString() === targetId.toString()
+    );
 
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (storyPreview) URL.revokeObjectURL(storyPreview);
-    };
-  }, [storyPreview]);
-
-  const handleStoryFileChange = (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setStoryFile(file);
-    setStoryPreview(URL.createObjectURL(file));
-  };
-
-  const closeStoryForm = () => {
-    if (creatingStory) return;
-    setStoryFormOpen(false);
-    setStoryCaption("");
-    setStoryFile(null);
-    setStoryPreview("");
+    try {
+      setFollowLoading((prev) => ({ ...prev, [targetId]: true }));
+      if (isFollowing) {
+        await axiosInstance.delete(`/users/${targetId}/follow`);
+        dispatch(removeFollowing(targetId));
+      } else {
+        await axiosInstance.post(`/users/${targetId}/follow`);
+        dispatch(addFollowing(targetId));
+      }
+      setSuggestedUsers((prev) =>
+        prev.map((u) =>
+          u._id === targetId ? { ...u, isFollowing: !isFollowing } : u
+        )
+      );
+    } catch (err) {
+      console.error("Follow error:", err);
+    } finally {
+      setFollowLoading((prev) => ({ ...prev, [targetId]: false }));
+    }
   };
 
   const handleCreateStory = async (event) => {
     event.preventDefault();
 
-    if (!storyFile || !storyCaption.trim()) {
-      alert("Please add an image and a caption.");
+    if (!storyFile) {
+      setStoryError("Please select an image for your story.");
       return;
     }
 
     try {
-      setCreatingStory(true);
+      setStoryCreating(true);
+      setStoryError("");
+
       const formData = new FormData();
-      formData.append("image", storyFile);
       formData.append("caption", storyCaption.trim());
+      formData.append("image", storyFile);
 
-      await axiosInstance.post("/story/createStory", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      await fetchStories();
-      setStoryFormOpen(false);
-      setStoryCaption("");
+      const response = await axiosInstance.post("/stories/createStory", formData);
+      dispatch(addStory(response.data.story));
       setStoryFile(null);
-      setStoryPreview("");
+      setStoryCaption("");
+      event.target.reset();
     } catch (error) {
-      console.error("Error creating story:", error);
-      alert(error.response?.data?.message || "Failed to create story");
+      console.error("Story creation failed:", error);
+      setStoryError(error.response?.data?.message || "Unable to create story.");
     } finally {
-      setCreatingStory(false);
+      setStoryCreating(false);
     }
   };
 
-  const getItemKey = (type, id) => `${type}-${id}`;
+  const getStoryLabel = (story) => {
+    if (story.author?._id === user?._id) return "Your Story";
+    return story.author?.username || "Story";
+  };
 
-  // Handle Like/Unlike with Optimistic UI updates
-  const handleToggleLike = async (itemId, type) => {
-    const previousItems = [...feedItems];
+  const handleFileChange = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
 
-    setFeedItems((prevItems) =>
-      prevItems.map((item) => {
-        if (item._id === itemId) {
-          const likesArray = item.likes || [];
-          const isLiked = likesArray.includes(user?._id);
-          const updatedLikes = isLiked
-            ? likesArray.filter((id) => id !== user?._id)
-            : [...likesArray, user?._id];
+    if (contentType === "post" && !file.type.startsWith("image/")) {
+      setCreateError("Please select an image file for posts.");
+      return;
+    }
 
-          return { ...item, likes: updatedLikes };
-        }
-        return item;
-      })
-    );
+    if (contentType === "reel" && !file.type.startsWith("video/")) {
+      setCreateError("Please select a video file for reels.");
+      return;
+    }
+
+    setSelectedFile(file);
+    setFilePreview(URL.createObjectURL(file));
+    setCreateError("");
+  };
+
+  const handleContentTypeChange = (type) => {
+    setContentType(type);
+    setSelectedFile(null);
+    setFilePreview("");
+    setCreateError("");
+  };
+
+  const handleCreateContent = async (event) => {
+    event.preventDefault();
+
+    if (contentType === "post" && !caption.trim() && !selectedFile) {
+      setCreateError("Add a caption or select an image.");
+      return;
+    }
+
+    if (contentType === "reel" && !selectedFile) {
+      setCreateError("Please select a video for your reel.");
+      return;
+    }
 
     try {
-      const response = await axiosInstance.post(`/${type}/like/${itemId}`);
-      const { likes, likesCount } = response.data;
+      setCreateLoading(true);
+      setCreateError("");
 
-      // Sync backend like data
-      setFeedItems((prevItems) =>
-        prevItems.map((item) => {
-          if (item._id === itemId) {
-            return {
-              ...item,
-              likes: Array.isArray(likes) ? likes : item.likes,
-              likesCount: likesCount ?? (Array.isArray(likes) ? likes.length : item.likes?.length || 0),
-            };
-          }
-          return item;
-        })
-      );
+      const formData = new FormData();
+      formData.append("caption", caption.trim());
+      if (selectedFile) {
+        formData.append(contentType === "post" ? "image" : "video", selectedFile);
+      }
+
+      if (contentType === "post") {
+        const response = await axiosInstance.post("/posts", formData);
+        dispatch(addPost(response.data.post));
+      } else {
+        const response = await axiosInstance.post("/reels", formData);
+        dispatch(addReel(response.data.reel));
+      }
+
+      setCaption("");
+      setSelectedFile(null);
+      setFilePreview("");
+      setIsCreateModalOpen(false);
+      event.target.reset?.();
     } catch (error) {
-      console.error("Error toggling like:", error);
-      setFeedItems(previousItems); // Rollback on API error
+      console.error("Content creation failed:", error);
+      setCreateError(error.response?.data?.message || "Unable to create content.");
+    } finally {
+      setCreateLoading(false);
+    }
+  };
+
+  const handleLike = async (type, id) => {
+    const key = getItemKey(type, id);
+
+    try {
+      setLikeLoading((prev) => ({ ...prev, [key]: true }));
+      setInteractionError((prev) => ({ ...prev, [key]: "" }));
+
+      const endpoint = type === "post" ? `/posts/${id}/like` : `/reels/${id}/like`;
+      const response = await axiosInstance.patch(endpoint);
+      const liked = response.data.liked;
+
+      if (type === "post") {
+        dispatch(
+          updatePostLike({
+            postId: id,
+            userId: user?._id,
+            liked,
+          })
+        );
+      } else {
+        dispatch(updateReelLike({ reelId: id, userId: user?._id, liked }));
+      }
+    } catch (error) {
+      console.error("Like update failed:", error);
+      setInteractionError((prev) => ({
+        ...prev,
+        [key]: error.response?.data?.message || "Unable to update like.",
+      }));
+    } finally {
+      setLikeLoading((prev) => ({ ...prev, [key]: false }));
     }
   };
 
@@ -289,18 +281,23 @@ function Home() {
     const willOpen = !openComments[key];
 
     setOpenComments((prev) => ({ ...prev, [key]: willOpen }));
-    if (!willOpen || commentsByItem[key] !== undefined) return;
+
+    if (!willOpen || commentsByItem[key] !== undefined) {
+      return;
+    }
 
     try {
       setCommentLoading((prev) => ({ ...prev, [key]: true }));
       setInteractionError((prev) => ({ ...prev, [key]: "" }));
-      const response = await axiosInstance.get(`/comment/${type}/${id}`);
+
+      const response = await axiosInstance.get(`/comments/${type}/${id}`);
+
       setCommentsByItem((prev) => ({
         ...prev,
         [key]: response.data.comments || [],
       }));
     } catch (error) {
-      console.error("Error fetching comments:", error);
+      console.error("Comments fetch failed:", error);
       setInteractionError((prev) => ({
         ...prev,
         [key]: error.response?.data?.message || "Unable to load comments.",
@@ -312,21 +309,31 @@ function Home() {
 
   const handleAddComment = async (event, type, id) => {
     event.preventDefault();
+
     const key = getItemKey(type, id);
     const text = commentInputs[key]?.trim();
+
     if (!text) return;
 
     try {
       setCommentLoading((prev) => ({ ...prev, [key]: true }));
       setInteractionError((prev) => ({ ...prev, [key]: "" }));
-      const response = await axiosInstance.post(`/comment/${type}/${id}`, { text });
+
+      const response = await axiosInstance.post(`/comments/${type}/${id}`, {
+        text,
+      });
+
       setCommentsByItem((prev) => ({
         ...prev,
         [key]: [...(prev[key] || []), response.data.comment],
       }));
-      setCommentInputs((prev) => ({ ...prev, [key]: "" }));
+
+      setCommentInputs((prev) => ({
+        ...prev,
+        [key]: "",
+      }));
     } catch (error) {
-      console.error("Error adding comment:", error);
+      console.error("Comment create failed:", error);
       setInteractionError((prev) => ({
         ...prev,
         [key]: error.response?.data?.message || "Unable to add comment.",
@@ -338,14 +345,17 @@ function Home() {
 
   const handleDeleteComment = async (commentId, type, id) => {
     const key = getItemKey(type, id);
+
     try {
-      await axiosInstance.delete(`/comment/${commentId}`);
+      setInteractionError((prev) => ({ ...prev, [key]: "" }));
+      await axiosInstance.delete(`/comments/${commentId}`);
+
       setCommentsByItem((prev) => ({
         ...prev,
         [key]: (prev[key] || []).filter((comment) => comment._id !== commentId),
       }));
     } catch (error) {
-      console.error("Error deleting comment:", error);
+      console.error("Comment delete failed:", error);
       setInteractionError((prev) => ({
         ...prev,
         [key]: error.response?.data?.message || "Unable to delete comment.",
@@ -353,486 +363,942 @@ function Home() {
     }
   };
 
-  const handleFileChange = (event) => {
-    const file = event.target.files?.[0];
-    if (file) setSelectedFile(file);
+  const handleLogout = async () => {
+    await logout();
+    navigate("/login", { replace: true });
   };
 
-  const handleContentTypeChange = (type) => {
-    setContentType(type);
-    setSelectedFile(null);
-  };
+  const getInitials = (name) =>
+    name?.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "U";
 
-  const handleCreateContent = async () => {
-    if (!caption && !selectedFile) {
-      alert(`Please provide a caption or select an ${contentType === "post" ? "image" : "video"}.`);
-      return;
-    }
+  const renderInteractions = (item, type) => {
+    const key = getItemKey(type, item._id);
+    const liked = isLikedByCurrentUser(item);
+    const comments = commentsByItem[key];
 
-    try {
-      setLoading(true);
-      const formData = new FormData();
-      formData.append("caption", caption);
+    return (
+      <>
+        <div className="mt-4 flex items-center justify-between text-xs text-slate-400 font-medium">
+          <span className="flex items-center gap-1.5">
+            <span className="text-rose-500 font-bold">♥</span> {item.likes?.length || 0} likes
+          </span>
+          <span>
+            {comments !== undefined
+              ? `${comments.length} ${comments.length === 1 ? "comment" : "comments"}`
+              : "View discussion"}
+          </span>
+        </div>
 
-      if (selectedFile) {
-        const fieldName = contentType === "post" ? "image" : "file";
-        formData.append(fieldName, selectedFile);
-      }
+        <div className="mt-3 flex items-center gap-1 border-t border-slate-100 pt-2.5">
+          <button
+            type="button"
+            onClick={() => handleLike(type, item._id)}
+            disabled={likeLoading[key]}
+            className={`flex-1 flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-bold transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-60 ${
+              liked
+                ? "bg-rose-50 text-rose-600"
+                : "text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <span className="text-sm">{liked ? "❤️" : "🤍"}</span>
+            <span>{liked ? "Liked" : "Like"}</span>
+          </button>
 
-      const endpoint = contentType === "post" ? "/post/createPost" : "/reel/create";
+          <button
+            type="button"
+            onClick={() => handleToggleComments(type, item._id)}
+            className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition active:scale-95"
+          >
+            <span className="text-sm">💬</span>
+            <span>{openComments[key] ? "Hide" : "Comment"}</span>
+          </button>
 
-      const response = await axiosInstance.post(endpoint, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+          <button
+            type="button"
+            onClick={() => {
+              if (navigator.share) {
+                navigator.share({
+                  title: "SST Social Post",
+                  url: window.location.href,
+                }).catch(() => {});
+              } else {
+                navigator.clipboard?.writeText(window.location.href);
+                alert("Post link copied to clipboard!");
+              }
+            }}
+            className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition active:scale-95"
+          >
+            <span className="text-sm">↗️</span>
+            <span>Share</span>
+          </button>
+        </div>
 
-      const newItem = response.data.post || response.data.reel;
-      const createdType = contentType;
+        {interactionError[key] && (
+          <p className="mt-2 text-xs text-red-500">{interactionError[key]}</p>
+        )}
 
-      setFeedItems((prev) => [{ ...newItem, type: createdType, likes: newItem.likes || [] }, ...prev]);
+        {openComments[key] && (
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            {commentLoading[key] && comments === undefined ? (
+              <p className="text-xs text-slate-400 py-2">Loading comments...</p>
+            ) : (
+              <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                {(comments || []).map((comment) => (
+                  <div key={comment._id} className="flex items-start gap-2.5">
+                    <img
+                      src={
+                        comment.user?.profileImage ||
+                        `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                          comment.user?.name || "User"
+                        )}&background=6366f1&color=fff`
+                      }
+                      alt={comment.user?.name || "User"}
+                      className="h-7 w-7 shrink-0 rounded-full object-cover"
+                    />
 
-      setCaption("");
-      setSelectedFile(null);
-    } catch (error) {
-      console.error("Error creating content:", error);
-      alert(error.response?.data?.message || "Failed to create content");
-    } finally {
-      setLoading(false);
-    }
+                    <div className="min-w-0 flex-1 rounded-2xl bg-slate-50 px-3.5 py-2.5 text-xs">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-bold text-slate-800">
+                          {comment.user?.name || "User"}
+                        </span>
+                        {comment.user?._id === user?._id && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteComment(comment._id, type, item._id)}
+                            className="text-[11px] font-semibold text-slate-400 hover:text-red-500"
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                      <p className="mt-1 break-words text-slate-600 leading-relaxed">
+                        {comment.text}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+
+                {comments?.length === 0 && (
+                  <p className="text-xs text-slate-400 py-1">
+                    No comments yet. Be the first to share your thoughts!
+                  </p>
+                )}
+              </div>
+            )}
+
+            <form
+              onSubmit={(event) => handleAddComment(event, type, item._id)}
+              className="mt-3 flex items-center gap-2"
+            >
+              <input
+                type="text"
+                value={commentInputs[key] || ""}
+                onChange={(event) =>
+                  setCommentInputs((prev) => ({
+                    ...prev,
+                    [key]: event.target.value,
+                  }))
+                }
+                maxLength={500}
+                placeholder="Write a comment..."
+                className="min-w-0 flex-1 rounded-xl bg-slate-50 px-3.5 py-2.5 text-xs text-slate-700 outline-none focus:bg-slate-100 focus:ring-1 focus:ring-indigo-400 transition"
+              />
+              <button
+                type="submit"
+                disabled={commentLoading[key] || !commentInputs[key]?.trim()}
+                className="rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Post
+              </button>
+            </form>
+          </div>
+        )}
+      </>
+    );
   };
 
   return (
-    <div className="min-h-screen bg-[#f6f7fb] text-slate-900">
-      <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
-          <button onClick={() => navigate("/home")} className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 text-sm font-black text-white shadow-sm">
-              S
-            </div>
-            <div className="hidden text-left sm:block">
-              <p className="text-base font-black tracking-tight">SST Social</p>
-              <p className="text-[11px] text-slate-500">Your circle, your feed.</p>
-            </div>
-          </button>
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 pb-20 md:pb-8">
+      {/* Top Navbar */}
+      <Navbar onOpenCreate={() => setIsCreateModalOpen(true)} />
 
-          <div className="hidden w-72 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-500 md:flex">
-            <span className="text-base">⌕</span>
-            <span>Search people or posts</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button className="rounded-full p-2.5 text-slate-500 transition hover:bg-slate-100" aria-label="Notifications">♡</button>
-            <button
-              onClick={() => navigate(`/profile/${user?.username}`)}
-              className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1.5 pl-1.5 pr-3 transition hover:border-slate-300 hover:shadow-sm"
-            >
-              <Avatar initials={getInitials(user?.name)} tone="from-indigo-500 to-violet-500" size="h-8 w-8" />
-              <span className="hidden text-sm font-semibold sm:block">{user?.name || user?.username || "You"}</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="rounded-full px-3 py-2 text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-            >
-              Logout
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[240px_minmax(0,1fr)_280px]">
+      {/* Main 3-Column Responsive Layout */}
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 grid grid-cols-1 gap-6 lg:grid-cols-[250px_minmax(0,1fr)_320px]">
+        {/* Left Sticky Navigation (Desktop) */}
         <aside className="hidden lg:block">
           <div className="sticky top-24 space-y-4">
-            <div className="rounded-3xl border border-slate-200 bg-white p-3 shadow-sm">
-              <button className="flex w-full items-center gap-3 rounded-2xl bg-indigo-50 px-4 py-3 text-left">
-                <span className="text-lg">⌂</span>
-                <span className="text-sm font-bold text-indigo-700">Home Feed</span>
-              </button>
+            <div className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white p-3 shadow-xs">
               <button
-                onClick={() => navigate(`/profile/${user?.username}`)}
-                className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-slate-600 transition hover:bg-slate-50"
+                type="button"
+                onClick={() => setFeedFilter("all")}
+                className={`flex w-full items-center gap-3.5 rounded-2xl px-4 py-3 text-left transition ${
+                  feedFilter === "all"
+                    ? "bg-indigo-50 font-bold text-indigo-700"
+                    : "text-slate-600 hover:bg-slate-50 font-semibold"
+                }`}
               >
-                <span className="text-lg">◉</span>
-                <span className="text-sm font-semibold">My Profile</span>
+                <span className="text-xl">🏠</span>
+                <span className="text-sm">Home Feed</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFeedFilter("posts")}
+                className={`flex w-full items-center gap-3.5 rounded-2xl px-4 py-3 text-left transition ${
+                  feedFilter === "posts"
+                    ? "bg-indigo-50 font-bold text-indigo-700"
+                    : "text-slate-600 hover:bg-slate-50 font-semibold"
+                }`}
+              >
+                <span className="text-xl">📸</span>
+                <span className="text-sm">Posts Only</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFeedFilter("reels")}
+                className={`flex w-full items-center gap-3.5 rounded-2xl px-4 py-3 text-left transition ${
+                  feedFilter === "reels"
+                    ? "bg-indigo-50 font-bold text-indigo-700"
+                    : "text-slate-600 hover:bg-slate-50 font-semibold"
+                }`}
+              >
+                <span className="text-xl">🎬</span>
+                <span className="text-sm">Reels Explorer</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsSearchOpen(true)}
+                className="flex w-full items-center gap-3.5 rounded-2xl px-4 py-3 text-left text-slate-600 transition hover:bg-slate-50 font-semibold"
+              >
+                <span className="text-xl">🔍</span>
+                <span className="text-sm">Search</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsNotificationsOpen(true)}
+                className="flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left text-slate-600 transition hover:bg-slate-50 font-semibold"
+              >
+                <div className="flex items-center gap-3.5">
+                  <span className="text-xl">🔔</span>
+                  <span className="text-sm">Notifications</span>
+                </div>
+                {unreadCount > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-rose-500 text-white">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => navigate(`/profile/${user?.username}`)}
+                className="flex w-full items-center gap-3.5 rounded-2xl px-4 py-3 text-left text-slate-600 transition hover:bg-slate-50 font-semibold"
+              >
+                <span className="text-xl">👤</span>
+                <span className="text-sm">My Profile</span>
+              </button>
+            </div>
+
+            {/* Quick Action Button */}
+            <button
+              type="button"
+              onClick={() => setIsCreateModalOpen(true)}
+              className="w-full flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 py-3.5 text-sm font-bold text-white shadow-md shadow-indigo-500/20 hover:from-indigo-700 hover:to-violet-700 active:scale-98 transition"
+            >
+              <span>➕</span>
+              <span>New Post / Reel</span>
+            </button>
+
+            {/* User Mini Profile Card */}
+            <div className="flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-white p-3.5 shadow-xs">
+              <img
+                src={
+                  user?.profileImage ||
+                  `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                    user?.name || "User"
+                  )}&background=6366f1&color=fff`
+                }
+                alt={user?.name}
+                className="h-10 w-10 rounded-full object-cover border border-slate-200"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold text-slate-900 truncate">{user?.name}</p>
+                <p className="text-[11px] text-slate-400 truncate">@{user?.username}</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 text-xs transition"
+                title="Logout"
+              >
+                🚪
               </button>
             </div>
           </div>
         </aside>
 
-        <section className="min-w-0">
-          <div className="mb-5 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between px-5 py-4">
-              <div>
-                <h1 className="text-xl font-black tracking-tight">Your Feed</h1>
-                <p className="mt-1 text-xs text-slate-500">See what your circle is up to.</p>
+        {/* Center Column: Stories + Composer + Feed */}
+        <section className="min-w-0 space-y-5">
+          {/* Stories Card */}
+          <div className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-xs">
+            <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-sm">✨</span>
+                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700">Stories</h2>
               </div>
+              <span className="text-[11px] text-slate-400">Expires in 24h</span>
             </div>
-            <div className="flex gap-4 overflow-x-auto border-t border-slate-100 px-5 py-4 scrollbar-hide">
-              <button
-                type="button"
-                onClick={() => setStoryFormOpen(true)}
-                className="group flex w-[76px] shrink-0 flex-col items-center gap-2"
-              >
-                <div className="relative rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 p-[3px] transition group-hover:scale-105">
-                  <div className="rounded-full bg-white p-[2px]">
-                    <Avatar initials={getInitials(user?.name)} tone="from-indigo-500 to-violet-500" size="h-12 w-12" />
-                  </div>
-                  <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white bg-indigo-600 text-sm font-bold text-white">+</span>
+
+            <div className="p-4">
+              {/* Add Story Input Row */}
+              <form onSubmit={handleCreateStory} className="mb-4 flex flex-wrap items-center gap-2 bg-slate-50/70 p-2.5 rounded-2xl border border-slate-100">
+                <input
+                  type="text"
+                  value={storyCaption}
+                  onChange={(e) => setStoryCaption(e.target.value)}
+                  maxLength={200}
+                  placeholder="Share a thought with your story..."
+                  className="min-w-0 flex-1 bg-white rounded-xl px-3 py-2 text-xs text-slate-700 outline-none border border-slate-200 focus:border-indigo-400"
+                />
+                <label className="cursor-pointer rounded-xl bg-white border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">
+                  {storyFile ? storyFile.name : "📷 Photo"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      setStoryFile(f);
+                      setStoryError("");
+                    }}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={storyCreating || !storyFile}
+                  className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition"
+                >
+                  {storyCreating ? "Uploading..." : "Share Story"}
+                </button>
+              </form>
+
+              {storyError && <p className="mb-3 text-xs text-rose-500 font-medium">{storyError}</p>}
+
+              {storyLoading ? (
+                <p className="text-xs text-slate-400 py-3">Loading stories...</p>
+              ) : (
+                <div className="flex gap-4 overflow-x-auto pb-1 scrollbar-hide">
+                  {stories.map((story) => (
+                    <button
+                      key={story._id}
+                      type="button"
+                      onClick={() => setActiveStory(story)}
+                      className="group flex w-18 shrink-0 flex-col items-center gap-1.5 focus:outline-none"
+                    >
+                      <div className="rounded-full bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 p-[2.5px] transition group-hover:scale-105 shadow-sm">
+                        <div className="rounded-full bg-white p-[2px]">
+                          <img
+                            src={story.author?.profileImage || story.image}
+                            alt={story.author?.username || "Story"}
+                            className="h-13 w-13 rounded-full object-cover"
+                          />
+                        </div>
+                      </div>
+                      <span className="w-full truncate text-center text-[11px] font-semibold text-slate-700">
+                        {getStoryLabel(story)}
+                      </span>
+                    </button>
+                  ))}
+
+                  {stories.length === 0 && (
+                    <div className="py-2 text-xs text-slate-400 italic">
+                      No active stories right now. Be the first to add one!
+                    </div>
+                  )}
                 </div>
-                <span className="w-full truncate text-center text-[11px] font-semibold text-slate-600">Your Story</span>
-              </button>
+              )}
+            </div>
+          </div>
 
-              {fetchingStories ? (
-                <div className="flex items-center px-3 text-xs text-slate-400">Loading stories...</div>
-              ) : storyGroups.map((group) => {
-                const latestStory = group.stories[group.stories.length - 1];
-                const isCurrentUser = group.author?._id === user?._id;
+          {/* Inline Composer (Desktop) */}
+          <div className="hidden sm:block rounded-3xl border border-slate-200/80 bg-white p-5 shadow-xs">
+            <div className="flex items-start gap-3.5">
+              <img
+                src={
+                  user?.profileImage ||
+                  `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                    user?.name || "User"
+                  )}&background=6366f1&color=fff`
+                }
+                alt={user?.name}
+                className="h-10 w-10 rounded-full object-cover border border-slate-200"
+              />
 
-                return (
+              <div className="flex-1">
+                <textarea
+                  value={caption}
+                  onChange={(e) => setCaption(e.target.value)}
+                  maxLength={500}
+                  rows={2}
+                  placeholder={`What's happening, ${user?.name?.split(" ")[0] || "there"}?`}
+                  className="w-full resize-none rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-400 transition"
+                />
+
+                {filePreview && (
+                  <div className="relative mt-3 inline-block">
+                    {contentType === "post" ? (
+                      <img
+                        src={filePreview}
+                        alt="Preview"
+                        className="max-h-48 rounded-2xl object-cover border border-slate-200 shadow-sm"
+                      />
+                    ) : (
+                      <video
+                        src={filePreview}
+                        controls
+                        className="max-h-48 rounded-2xl object-cover border border-slate-200 shadow-sm"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedFile(null);
+                        setFilePreview("");
+                      }}
+                      className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-slate-900 text-white text-xs flex items-center justify-center shadow"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
+                <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleContentTypeChange("post")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                        contentType === "post"
+                          ? "bg-indigo-50 text-indigo-700 font-bold"
+                          : "text-slate-500 hover:bg-slate-50"
+                      }`}
+                    >
+                      📷 Photo Post
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleContentTypeChange("reel")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
+                        contentType === "reel"
+                          ? "bg-indigo-50 text-indigo-700 font-bold"
+                          : "text-slate-500 hover:bg-slate-50"
+                      }`}
+                    >
+                      🎬 Video Reel
+                    </button>
+
+                    <label className="cursor-pointer rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-50 transition">
+                      {selectedFile ? "Change file" : "Upload file"}
+                      <input
+                        type="file"
+                        accept={contentType === "post" ? "image/*" : "video/*"}
+                        onChange={handleFileChange}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+
                   <button
                     type="button"
-                    key={group.author?._id}
-                    onClick={() => openStoryGroup(group)}
-                    className="group flex w-[76px] shrink-0 flex-col items-center gap-2"
+                    onClick={handleCreateContent}
+                    disabled={createLoading}
+                    className="rounded-xl bg-indigo-600 px-5 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition shadow-sm"
                   >
-                    <div className="relative rounded-full bg-gradient-to-br from-pink-500 via-violet-500 to-indigo-500 p-[3px] transition group-hover:scale-105">
-                      <div className="rounded-full bg-white p-[2px]">
-                        {group.author?.profileImage ? (
-                          <img src={group.author.profileImage} alt="" className="h-12 w-12 rounded-full object-cover" />
-                        ) : latestStory?.image ? (
-                          <img src={latestStory.image} alt="" className="h-12 w-12 rounded-full object-cover" />
-                        ) : (
-                          <Avatar initials={getInitials(group.author?.username)} tone="from-pink-500 to-violet-500" size="h-12 w-12" />
-                        )}
-                      </div>
-                      {group.stories.length > 1 && (
-                        <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white bg-slate-900 px-1 text-[9px] font-bold text-white">
-                          {group.stories.length}
-                        </span>
-                      )}
-                    </div>
-                    <span className="w-full truncate text-center text-[11px] font-semibold text-slate-600">
-                      {isCurrentUser ? "You" : group.author?.username || "Story"}
-                    </span>
+                    {createLoading ? "Sharing..." : contentType === "post" ? "Publish Post" : "Publish Reel"}
                   </button>
-                );
-              })}
+                </div>
+
+                {createError && (
+                  <p className="mt-2 text-xs text-rose-500 font-medium">{createError}</p>
+                )}
+              </div>
             </div>
           </div>
 
-          <div className="mb-5 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex items-start gap-3">
-              <Avatar initials={getInitials(user?.name)} tone="from-indigo-500 to-violet-500" />
-              <textarea
-                value={caption}
-                onChange={(event) => setCaption(event.target.value)}
-                maxLength={500}
-                rows={2}
-                placeholder={`What's on your mind, ${user?.name?.split(" ")[0] || "there"}?`}
-                className="flex-1 resize-none rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none transition focus:bg-slate-100"
-              />
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+          {/* Feed Filter Header */}
+          <div className="flex items-center justify-between bg-white px-5 py-3 rounded-2xl border border-slate-200/80 shadow-2xs">
+            <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => handleContentTypeChange("post")}
-                className={contentType === "post" ? "rounded-xl bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700" : "rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-50"}
+                onClick={() => setFeedFilter("all")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                  feedFilter === "all" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+                }`}
               >
-                ▧ Post
+                All Feed
               </button>
-
               <button
                 type="button"
-                onClick={() => handleContentTypeChange("reel")}
-                className={contentType === "reel" ? "rounded-xl bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700" : "rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-50"}
+                onClick={() => setFeedFilter("posts")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                  feedFilter === "posts" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+                }`}
               >
-                ▶ Reel
+                Posts ({posts.length})
               </button>
-
-              <label className="cursor-pointer rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-50">
-                {contentType === "post" ? "Choose Image" : "Choose Video"}
-                <input
-                  type="file"
-                  accept={contentType === "post" ? "image/*" : "video/*"}
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
-              </label>
-
               <button
                 type="button"
-                disabled={loading}
-                onClick={handleCreateContent}
-                className="ml-auto rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-indigo-700 disabled:opacity-50"
+                onClick={() => setFeedFilter("reels")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                  feedFilter === "reels" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+                }`}
               >
-                {loading ? "Posting..." : contentType === "post" ? "Create Post" : "Create Reel"}
+                Reels ({reels.length})
               </button>
             </div>
-            {selectedFile && <p className="mt-2 text-xs text-slate-500">Selected: {selectedFile.name}</p>}
+
+            <span className="text-xs text-slate-400 font-medium hidden sm:inline">
+              Sorted by Latest
+            </span>
           </div>
 
+          {/* Feed List Items */}
           <div className="space-y-5">
-            {fetchingFeed ? (
-              <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
-                Loading feed...
+            {postsLoading && (
+              <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center text-sm text-slate-400">
+                <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-r-transparent"></div>
+                <p className="mt-3">Loading your personalized feed...</p>
               </div>
-            ) : feedItems.length === 0 ? (
-              <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
-                No posts or reels to show yet. Be the first to share!
-              </div>
-            ) : (
-              feedItems.map((item) => {
-                const isLiked = item.likes?.includes(user?._id);
-                const likesCount = item.likesCount ?? item.likes?.length ?? 0;
+            )}
 
-                return (
-                  <article key={item._id} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-                    <div className="flex items-center justify-between px-5 py-4">
-                      <div className="flex items-center gap-3">
-                        <Avatar initials={getInitials(item.author?.name)} tone="from-indigo-500 to-violet-500" />
-                        <div>
-                          <p className="text-sm font-bold">{item.author?.name || "User"}</p>
-                          <p className="text-xs text-slate-400">
-                            @{item.author?.username || "username"}
-                            {item.createdAt && ` · ${new Date(item.createdAt).toLocaleDateString()}`}
-                          </p>
-                        </div>
+            {/* Posts */}
+            {(feedFilter === "all" || feedFilter === "posts") &&
+              posts.map((post) => (
+                <article
+                  key={post._id}
+                  className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-xs hover:border-slate-300 transition"
+                >
+                  {/* Post Header */}
+                  <div className="flex items-center justify-between px-5 py-4">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/profile/${post.author?.username}`)}
+                      className="flex items-center gap-3 text-left group"
+                    >
+                      <img
+                        src={
+                          post.author?.profileImage ||
+                          `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                            post.author?.name || "User"
+                          )}&background=6366f1&color=fff`
+                        }
+                        alt={post.author?.name || "User"}
+                        className="h-10 w-10 rounded-full object-cover border border-slate-200 group-hover:ring-2 group-hover:ring-indigo-400 transition"
+                      />
+                      <div>
+                        <p className="text-xs font-bold text-slate-900 group-hover:text-indigo-600 transition">
+                          {post.author?.name || "User"}
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                          @{post.author?.username} •{" "}
+                          {new Date(post.createdAt).toLocaleDateString()}
+                        </p>
                       </div>
-                      {item.type === "reel" && (
-                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Reel</span>
-                      )}
-                    </div>
+                    </button>
+                  </div>
 
-                    {item.type === "post" ? (
-                      item.image && <img src={item.image} alt="Post content" className="w-full max-h-[520px] object-cover" />
-                    ) : (
-                      item.video && <video src={item.video} controls className="w-full max-h-[520px] object-cover bg-black" />
+                  {/* Post Media */}
+                  {post.image && (
+                    <img
+                      src={post.image}
+                      alt={post.caption || "Post"}
+                      className="max-h-[580px] w-full object-cover border-y border-slate-100"
+                    />
+                  )}
+
+                  {/* Post Content & Actions */}
+                  <div className="px-5 py-4">
+                    {post.caption && (
+                      <p className="text-xs sm:text-sm text-slate-700 leading-relaxed font-normal">
+                        {post.caption}
+                      </p>
                     )}
 
-                    <div className="px-5 pb-5 pt-4">
-                      {item.caption && <p className="text-sm text-slate-700 mb-3">{item.caption}</p>}
-                      <div className="flex items-center justify-between text-xs text-slate-400">
-                        <span>{likesCount} {likesCount === 1 ? "like" : "likes"}</span>
-                        <span>
-                          {commentsByItem[getItemKey(item.type, item._id)] !== undefined
-                            ? `${commentsByItem[getItemKey(item.type, item._id)].length} comments`
-                            : "Comments"}
-                        </span>
-                      </div>
-                      <div className="mt-4 flex border-t border-slate-100 pt-3">
-                        <button
-                          onClick={() => handleToggleLike(item._id, item.type)}
-                          className={`flex-1 rounded-xl py-2 text-sm font-semibold transition ${
-                            isLiked
-                              ? "text-rose-600 bg-rose-50"
-                              : "text-slate-600 hover:bg-slate-50"
-                          }`}
-                        >
-                          {isLiked ? "♥ Liked" : "♡ Like"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleToggleComments(item.type, item._id)}
-                          className="flex-1 rounded-xl py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
-                        >
-                          ◌ {openComments[getItemKey(item.type, item._id)] ? "Hide Comments" : "Comment"}
-                        </button>
-                        <button className="flex-1 rounded-xl py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">↗ Share</button>
-                      </div>
+                    {renderInteractions(post, "post")}
+                  </div>
+                </article>
+              ))}
 
-                      {interactionError[getItemKey(item.type, item._id)] && (
-                        <p className="mt-2 text-xs text-red-500">
-                          {interactionError[getItemKey(item.type, item._id)]}
-                        </p>
-                      )}
-
-                      {openComments[getItemKey(item.type, item._id)] && (
-                        <div className="mt-4 border-t border-slate-100 pt-4">
-                          <div className="space-y-3">
-                            {(commentsByItem[getItemKey(item.type, item._id)] || []).map((comment) => (
-                              <div key={comment._id} className="flex items-start gap-3">
-                                <Avatar initials={getInitials(comment.user?.name)} tone="from-slate-500 to-slate-700" size="h-8 w-8" />
-                                <div className="min-w-0 flex-1 rounded-2xl bg-slate-50 px-3 py-2">
-                                  <div className="flex items-start justify-between gap-3">
-                                    <p className="text-xs font-bold text-slate-700">{comment.user?.name || "Unknown User"}</p>
-                                    {comment.user?._id === user?._id && (
-                                      <button
-                                        type="button"
-                                        onClick={() => handleDeleteComment(comment._id, item.type, item._id)}
-                                        className="text-[11px] font-semibold text-slate-400 hover:text-red-500"
-                                      >
-                                        Delete
-                                      </button>
-                                    )}
-                                  </div>
-                                  <p className="mt-0.5 break-words text-sm text-slate-600">{comment.text}</p>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-
-                          <form
-                            onSubmit={(event) => handleAddComment(event, item.type, item._id)}
-                            className="mt-4 flex items-center gap-2"
-                          >
-                            <input
-                              type="text"
-                              value={commentInputs[getItemKey(item.type, item._id)] || ""}
-                              onChange={(event) =>
-                                setCommentInputs((prev) => ({
-                                  ...prev,
-                                  [getItemKey(item.type, item._id)]: event.target.value,
-                                }))
-                              }
-                              maxLength={500}
-                              placeholder="Write a comment..."
-                              className="min-w-0 flex-1 rounded-xl bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none"
-                            />
-                            <button
-                              type="submit"
-                              disabled={commentLoading[getItemKey(item.type, item._id)]}
-                              className="rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50"
-                            >
-                              Post
-                            </button>
-                          </form>
+            {/* Reels */}
+            {(feedFilter === "all" || feedFilter === "reels") &&
+              reels.map((reel) => (
+                <article
+                  key={reel._id}
+                  className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-xs"
+                >
+                  <div className="flex items-center justify-between px-5 py-4">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/profile/${reel.author?.username}`)}
+                      className="flex items-center gap-3 text-left group"
+                    >
+                      <img
+                        src={
+                          reel.author?.profileImage ||
+                          `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                            reel.author?.name || "User"
+                          )}&background=6366f1&color=fff`
+                        }
+                        alt={reel.author?.name || "User"}
+                        className="h-10 w-10 rounded-full object-cover border border-slate-200 group-hover:ring-2 group-hover:ring-indigo-400 transition"
+                      />
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-xs font-bold text-slate-900 group-hover:text-indigo-600 transition">
+                            {reel.author?.name || "User"}
+                          </p>
+                          <span className="px-1.5 py-0.5 rounded-md bg-purple-50 text-[10px] font-bold text-purple-600 border border-purple-200">
+                            Reel
+                          </span>
                         </div>
-                      )}
+                        <p className="text-[11px] text-slate-400">
+                          @{reel.author?.username} •{" "}
+                          {new Date(reel.createdAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </button>
+                  </div>
+
+                  {reel.video && (
+                    <div className="relative bg-black flex items-center justify-center max-h-[620px] aspect-[9/16] sm:aspect-auto">
+                      <video
+                        src={reel.video}
+                        controls
+                        className="max-h-[620px] w-full object-contain"
+                      />
                     </div>
-                  </article>
-                );
-              })
+                  )}
+
+                  <div className="px-5 py-4">
+                    {reel.caption && (
+                      <p className="text-xs sm:text-sm text-slate-700 leading-relaxed font-normal">
+                        {reel.caption}
+                      </p>
+                    )}
+
+                    {renderInteractions(reel, "reel")}
+                  </div>
+                </article>
+              ))}
+
+            {/* Empty State */}
+            {!postsLoading && posts.length === 0 && reels.length === 0 && (
+              <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center shadow-xs">
+                <div className="mx-auto mb-3 h-14 w-14 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-2xl">
+                  🚀
+                </div>
+                <h3 className="text-sm font-bold text-slate-800">Your feed is waiting</h3>
+                <p className="mt-1 text-xs text-slate-400 max-w-sm mx-auto">
+                  Publish a post or reel, or search for other users to build your circle!
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="mt-4 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 transition"
+                >
+                  Create First Post
+                </button>
+              </div>
             )}
           </div>
         </section>
 
+        {/* Right Sticky Sidebar (Desktop): Suggested Users */}
         <aside className="hidden lg:block">
           <div className="sticky top-24 space-y-5">
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-black">People to follow</h2>
-                <button className="text-xs font-bold text-indigo-600">See all</button>
+            <div className="rounded-3xl border border-slate-200/80 bg-white p-5 shadow-xs">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                  Who to follow
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setIsSearchOpen(true)}
+                  className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                >
+                  Explore →
+                </button>
               </div>
+
+              <div className="space-y-3.5">
+                {suggestedUsers.length === 0 ? (
+                  <p className="text-xs text-slate-400 py-3">
+                    No new suggestions at the moment.
+                  </p>
+                ) : (
+                  suggestedUsers.map((sugUser) => (
+                    <div
+                      key={sugUser._id}
+                      className="flex items-center justify-between gap-3 p-2 rounded-2xl hover:bg-slate-50 transition"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/profile/${sugUser.username}`)}
+                        className="flex items-center gap-3 min-w-0 text-left"
+                      >
+                        <img
+                          src={
+                            sugUser.profileImage ||
+                            `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                              sugUser.name || "User"
+                            )}&background=6366f1&color=fff`
+                          }
+                          alt={sugUser.name}
+                          className="h-9 w-9 rounded-full object-cover border border-slate-200"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-900 truncate">
+                            {sugUser.name}
+                          </p>
+                          <p className="text-[11px] text-slate-400 truncate">
+                            @{sugUser.username}
+                          </p>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleFollowSuggestion(sugUser)}
+                        disabled={followLoading[sugUser._id]}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shrink-0 ${
+                          sugUser.isFollowing
+                            ? "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                            : "bg-indigo-600 text-white hover:bg-indigo-700 shadow-2xs"
+                        }`}
+                      >
+                        {followLoading[sugUser._id]
+                          ? "..."
+                          : sugUser.isFollowing
+                          ? "Following"
+                          : "Follow"}
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Quick Links Card */}
+            <div className="p-4 rounded-3xl bg-slate-100/70 border border-slate-200/60 text-[11px] text-slate-400 space-y-2">
+              <p className="font-semibold text-slate-500">SST Social Platform</p>
+              <div className="flex flex-wrap gap-2 text-slate-500">
+                <span>Privacy</span>•
+                <span>Terms</span>•
+                <span>Community Guidelines</span>
+              </div>
+              <p>&copy; {new Date().getFullYear()} All rights reserved.</p>
             </div>
           </div>
         </aside>
       </main>
 
-      {storyFormOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4" onMouseDown={closeStoryForm}>
-          <form
-            onSubmit={handleCreateStory}
-            onMouseDown={(event) => event.stopPropagation()}
-            className="w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-2xl"
+      {/* Mobile Bottom Navigation Bar */}
+      <MobileBottomNav
+        onOpenCreate={() => setIsCreateModalOpen(true)}
+        onSelectReels={() => setFeedFilter("reels")}
+      />
+
+      {/* Story Fullscreen Viewer Modal */}
+      {activeStory && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-md"
+          onClick={() => setActiveStory(null)}
+        >
+          <div
+            className="w-full max-w-sm overflow-hidden rounded-3xl bg-slate-950 shadow-2xl border border-slate-800"
+            onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-              <div>
-                <h2 className="text-lg font-black">Create a story</h2>
-                <p className="text-xs text-slate-500">Share an image for the next 24 hours.</p>
-              </div>
-              <button type="button" onClick={closeStoryForm} className="rounded-full px-3 py-2 text-slate-500 hover:bg-slate-100" aria-label="Close">✕</button>
-            </div>
-
-            <div className="space-y-4 p-5">
-              <label className="block cursor-pointer overflow-hidden rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 text-center transition hover:border-indigo-300">
-                {storyPreview ? (
-                  <img src={storyPreview} alt="Story preview" className="h-72 w-full object-cover" />
-                ) : (
-                  <span className="flex h-48 flex-col items-center justify-center gap-2 px-4 text-sm font-semibold text-slate-600">
-                    <span className="text-3xl">▧</span>
-                    Choose an image
-                    <span className="text-xs font-normal text-slate-400">JPG, PNG, GIF or WebP · up to 5 MB</span>
-                  </span>
-                )}
-                <input type="file" accept="image/*" required onChange={handleStoryFileChange} className="hidden" />
-              </label>
-
-              <div>
-                <textarea
-                  value={storyCaption}
-                  onChange={(event) => setStoryCaption(event.target.value)}
-                  maxLength={200}
-                  required
-                  rows={3}
-                  placeholder="Write a caption..."
-                  className="w-full resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+            {/* Top Bar with Timer */}
+            <div className="p-3 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between text-white">
+              <div className="flex items-center gap-2.5">
+                <img
+                  src={activeStory.author?.profileImage || activeStory.image}
+                  alt={activeStory.author?.username}
+                  className="h-8 w-8 rounded-full object-cover border border-white/40"
                 />
-                <p className="mt-1 text-right text-xs text-slate-400">{storyCaption.length}/200</p>
+                <div>
+                  <p className="text-xs font-bold">{getStoryLabel(activeStory)}</p>
+                  <p className="text-[10px] text-white/60">
+                    {new Date(activeStory.createdAt).toLocaleTimeString()}
+                  </p>
+                </div>
               </div>
-
               <button
-                type="submit"
-                disabled={creatingStory || !storyFile || !storyCaption.trim()}
-                className="w-full rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                type="button"
+                onClick={() => setActiveStory(null)}
+                className="h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-sm"
               >
-                {creatingStory ? "Posting story..." : "Post story"}
+                ✕
               </button>
             </div>
-          </form>
+
+            <img
+              src={activeStory.image}
+              alt="Story"
+              className="max-h-[68vh] w-full object-contain bg-black"
+            />
+
+            {activeStory.caption && (
+              <div className="p-4 bg-slate-950 text-white text-xs leading-relaxed border-t border-slate-800">
+                {activeStory.caption}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {activeStory && (() => {
-        const currentStory = activeStory.group.stories[activeStory.index];
-        const author = activeStory.group.author;
+      {/* Content Creation Modal (Mobile & Universal) */}
+      {isCreateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <span className="text-base">✨</span>
+                <h3 className="text-sm font-bold text-slate-800">
+                  Create {contentType === "post" ? "Photo Post" : "Video Reel"}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCreateModalOpen(false)}
+                className="h-8 w-8 rounded-full text-slate-400 hover:text-slate-700 text-lg flex items-center justify-center"
+              >
+                ✕
+              </button>
+            </div>
 
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4" onMouseDown={() => setActiveStory(null)}>
-            <div className="relative w-full max-w-md overflow-hidden rounded-3xl bg-slate-900 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-              <div className="absolute inset-x-0 top-0 z-20 p-3">
-                <div className="mb-3 flex gap-1">
-                  {activeStory.group.stories.map((story, index) => (
-                    <div key={story._id} className="h-1 flex-1 overflow-hidden rounded-full bg-white/30">
-                      <div className={`h-full bg-white ${index <= activeStory.index ? "w-full" : "w-0"}`} />
-                    </div>
-                  ))}
-                </div>
-
-                <div className="flex items-center justify-between text-white">
-                  <div className="flex items-center gap-3">
-                    {author?.profileImage ? (
-                      <img src={author.profileImage} alt="" className="h-9 w-9 rounded-full object-cover ring-2 ring-white/70" />
-                    ) : (
-                      <Avatar initials={getInitials(author?.username)} size="h-9 w-9" />
-                    )}
-                    <div>
-                      <span className="text-sm font-bold">@{author?.username || "user"}</span>
-                      <p className="text-[10px] text-white/70">
-                        {activeStory.index + 1} / {activeStory.group.stories.length}
-                      </p>
-                    </div>
-                  </div>
-                  <button type="button" onClick={() => setActiveStory(null)} className="rounded-full bg-black/20 px-3 py-2" aria-label="Close story">✕</button>
-                </div>
+            <div className="p-5 space-y-4">
+              <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl">
+                <button
+                  type="button"
+                  onClick={() => handleContentTypeChange("post")}
+                  className={`flex-1 py-2 text-xs font-bold rounded-xl transition ${
+                    contentType === "post"
+                      ? "bg-white text-indigo-700 shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  📷 Photo Post
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleContentTypeChange("reel")}
+                  className={`flex-1 py-2 text-xs font-bold rounded-xl transition ${
+                    contentType === "reel"
+                      ? "bg-white text-indigo-700 shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  🎬 Video Reel
+                </button>
               </div>
 
-              {currentStory?.image && (
-                <img src={currentStory.image} alt={currentStory.caption || "Story"} className="max-h-[80vh] min-h-[480px] w-full object-cover" />
-              )}
-
-              <button
-                type="button"
-                onClick={showPreviousStory}
-                disabled={activeStory.index === 0}
-                className="absolute bottom-0 left-0 top-20 z-10 w-1/3 cursor-pointer disabled:cursor-default"
-                aria-label="Previous story"
-              />
-              <button
-                type="button"
-                onClick={showNextStory}
-                className="absolute bottom-0 right-0 top-20 z-10 w-1/3 cursor-pointer"
-                aria-label="Next story"
+              <textarea
+                value={caption}
+                onChange={(e) => setCaption(e.target.value)}
+                maxLength={500}
+                rows={3}
+                placeholder="Write a caption or description..."
+                className="w-full rounded-2xl bg-slate-50 p-4 text-xs sm:text-sm text-slate-800 outline-none border border-slate-200 focus:border-indigo-400 transition"
               />
 
-              {currentStory?.caption && (
-                <p className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/80 to-transparent px-6 pb-6 pt-16 text-center text-sm font-semibold text-white">
-                  {currentStory.caption}
-                </p>
+              {filePreview ? (
+                <div className="relative inline-block w-full">
+                  {contentType === "post" ? (
+                    <img
+                      src={filePreview}
+                      alt="Preview"
+                      className="max-h-56 w-full rounded-2xl object-cover border border-slate-200"
+                    />
+                  ) : (
+                    <video
+                      src={filePreview}
+                      controls
+                      className="max-h-56 w-full rounded-2xl object-cover border border-slate-200"
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedFile(null);
+                      setFilePreview("");
+                    }}
+                    className="absolute top-2 right-2 h-7 w-7 rounded-full bg-slate-900/80 text-white text-xs flex items-center justify-center shadow"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <label className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-slate-200 rounded-2xl cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/20 transition">
+                  <span className="text-3xl mb-2">
+                    {contentType === "post" ? "🖼️" : "🎥"}
+                  </span>
+                  <span className="text-xs font-bold text-slate-700">
+                    Click to select {contentType === "post" ? "image" : "video"}
+                  </span>
+                  <span className="text-[11px] text-slate-400 mt-1">
+                    {contentType === "post" ? "PNG, JPG up to 5MB" : "MP4, WebM up to 50MB"}
+                  </span>
+                  <input
+                    type="file"
+                    accept={contentType === "post" ? "image/*" : "video/*"}
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+                </label>
               )}
+
+              {createError && (
+                <p className="text-xs text-rose-500 font-medium">{createError}</p>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsCreateModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateContent}
+                  disabled={createLoading}
+                  className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl disabled:opacity-50 transition shadow-sm"
+                >
+                  {createLoading ? "Sharing..." : "Publish"}
+                </button>
+              </div>
             </div>
           </div>
-        );
-      })()}
+        </div>
+      )}
+
+      {/* Global Search and Notifications Modals */}
+      <SearchModal
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+      />
+
+      <NotificationsPanel
+        isOpen={isNotificationsOpen}
+        onClose={() => setIsNotificationsOpen(false)}
+      />
     </div>
   );
 }

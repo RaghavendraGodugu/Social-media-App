@@ -1,21 +1,38 @@
-import express from 'express'
-import { isAuthenticated } from '../middlewares/authMiddleware.js'
-import uploadReel from '../middlewares/uploadReel.middleware.js'
-import { createReel, getAllReels, toggleReelLike } from '../controllers/reel.controllers.js'
+import express from "express";
+import uploadReel from "../middlewares/reelUpload.middleware.js";
+import {
+    createReel,
+    getReels,
+    getReelsByUsername,
+    toggleReelLike
+} from "../controllers/reel.controllers.js";
+import isAuthenticated from "../middlewares/authMiddleware.js";
 
+const reelRoutes = express.Router();
 
+reelRoutes.post(
+    "/",
+    isAuthenticated,
+    uploadReel.single("video"),
+    createReel
+);
 
+reelRoutes.get(
+    "/",
+    isAuthenticated,
+    getReels
+);
 
+reelRoutes.get(
+    "/user/:username",
+    isAuthenticated,
+    getReelsByUsername
+);
 
-const reelRoutes = express.Router()
+reelRoutes.patch(
+    "/:id/like",
+    isAuthenticated,
+    toggleReelLike
+);
 
-
-reelRoutes.post('/createReel' , isAuthenticated ,uploadReel.single('video') , createReel  )
-reelRoutes.get('/getAllReels' , isAuthenticated , getAllReels )
-reelRoutes.post('/like/:id', isAuthenticated, toggleReelLike)
-
-
-
-
-
-export default reelRoutes
+export default reelRoutes;

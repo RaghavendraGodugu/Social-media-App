@@ -1,66 +1,72 @@
 import mongoose from "mongoose";
 
-const userSchema = new mongoose.Schema({
-    name: {
-        type: String,
-        required: true
-    },
-    username: {
-        type: String,
-        required: true,
-        unique: true
-    },
+const userSchema = new mongoose.Schema(
+    {
+        name: {
+            type: String,
+            required: true,
+            trim: true
+        },
 
-    email: {
-        type: String,
-        required: true,
-        unique: true
-    },
+        username: {
+            type: String,
+            required: true,
+            unique: true,
+            trim: true
+        },
 
-    password: {
-        type: String,
-        required: true
-    },
+        email: {
+            type: String,
+            required: true,
+            unique: true,
+            trim: true,
+            lowercase: true
+        },
 
-    profileImage: {
-        type: String
-    },
+        password: {
+            type: String,
+            required: true
+        },
 
-    followers: [
-        {
-            type: mongoose.Schema.Types.ObjectId,
-            // 6aa10de974c1b2368e521bd9
-            ref: "User"
+        phone: {
+            type: Number
+        },
+
+        bio: {
+            type: String
+        },
+
+        followers: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                // 123 - james
+                ref: "User"
+            }
+        ],
+        // people who follow me
+        followings: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "User"
+            }
+        ],
+        // people I follow
+        posts: [],
+        stories: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "Story"
+            }
+        ],
+        reels: [],
+
+        profileImage: {
+            type: String
         }
-    ],
-    // People who follow me
-
-    followings: [
-        {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "User"
-        }
-    ],
-    // People I follow
-
-    bio: {
-        type: String
     },
+    { timestamps: true }
+);
 
-    posts: [],
-    stories: [],
-    reels: [],
+const User = mongoose.model("User", userSchema);
 
-    isVerified: {
-        type: Boolean,
-        required: true,
-        default: false
-    }
-
-
-})
-
-
-const User = mongoose.model('User', userSchema)
-
-export default User
+export default User;

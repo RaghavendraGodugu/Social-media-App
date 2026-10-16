@@ -1,246 +1,250 @@
-// register controller
-import User from "../models/user.model.js"
-import bcrypt from 'bcrypt'
-import genToken from "../utils/generateToken.js"
-import cloudinary from "../utils/cloudinary.js"
-import uploadToCloudinary from "../utils/uploadToCloudinary.js"
+import User from "../models/user.model.js";
+import bcrypt from "bcrypt";
+import generateToken from "../utils/generateToken.js";
+import uploadToCloudinary from "../utils/uploadToCloudinary.js";
+import { createNotification } from "../utils/notify.js";
 
 const cookieOptions = {
-    httpOnly: true
-}
-
-const sanitizeUser = (user) => {
-    const safeUser = user.toObject ? user.toObject() : { ...user }
-    delete safeUser.password
-    return safeUser
-}
+    httpOnly: true,
+    sameSite: "lax",
+    secure: false,
+    maxAge: 7 * 24 * 60 * 60 * 1000
+};
 
 export const registerUser = async (req, res) => {
     try {
-        const { name, username, email, password } = req.body
-
-        if (!name || !username || !email || !password) {
-            return res.status(400).json({ message: 'All fields are required' })
-        }
-
-        if (password.length <= 6) {
-            return res.status(400).json({ message: 'Password should be greater than 6 characters' })
-        }
-
-        const userExists = await User.findOne({ username })
-        if (userExists) return res.status(409).json({ message: 'User Already Exists' })
-
-        const emailExists = await User.findOne({ email })
-        if (emailExists) return res.status(409).json({ message: 'User Already Exists' })
-
-        const salt = await bcrypt.genSalt(10)
-        const hashedPassword = await bcrypt.hash(password, salt)
-
-        const newUser = await User.create({ name, username, email, password: hashedPassword })
-        const token = genToken(newUser._id)
-        res.cookie('token', token, cookieOptions)
-
+        const { name, username, email, password } = req.body;
+        if (!username || !name || !password || !email) return res.status(400).json({ message: "All fields are required" });
+        if (password.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+        if (await User.findOne({ username })) return res.status(409).json({ message: "Username already exists" });
+        const normalizedEmail = email.trim().toLowerCase();
+        if (await User.findOne({ email: normalizedEmail })) return res.status(409).json({ message: "Email already exists" });
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const newUser = await User.create({ username, name, password: hashedPassword, email: normalizedEmail });
+        const token = generateToken(newUser._id);
+        res.cookie("token", token, cookieOptions);
         return res.status(201).json({
-            message: 'User Registered',
-            user: sanitizeUser(newUser)
-        })
-    } catch (error) {
-        return res.status(500).json({ message: 'Server crashed', error: error.message })
+            message: "Registration successful",
+            user: {
+                _id: newUser._id,
+                name: newUser.name,
+                username: newUser.username,
+                email: newUser.email,
+                profileImage: newUser.profileImage,
+                bio: newUser.bio,
+                followers: newUser.followers || [],
+                followings: newUser.followings || []
+            }
+        });
+    } catch (err) {
+        console.log(err);
+        return res.status(500).json({ message: "Internal Server Error", error: err.message });
     }
-}
+};
 
 export const loginUser = async (req, res) => {
     try {
-        const { email, password } = req.body
-        if (!email || !password) return res.status(400).json({ message: 'All fields are required' })
-
-        const user = await User.findOne({ email })
-        if (!user) return res.status(404).json({ message: 'User Not Found' })
-
-        const passwordMatched = await bcrypt.compare(password, user.password)
-        if (!passwordMatched) return res.status(401).json({ message: 'Password Did not match' })
-
-        const token = genToken(user._id)
-        res.cookie('token', token, cookieOptions)
-
+        const { email, password } = req.body;
+        if (!email || !password) return res.status(400).json({ message: "Email and password are required" });
+        const user = await User.findOne({ email: email.trim().toLowerCase() });
+        if (!user) return res.status(401).json({ message: "Invalid credentials" });
+        const isPasswordCorrect = await bcrypt.compare(password, user.password);
+        if (!isPasswordCorrect) return res.status(401).json({ message: "Invalid credentials" });
+        const token = generateToken(user._id);
+        res.cookie("token", token, cookieOptions);
         return res.status(200).json({
-            message: 'User Logged In',
-            userData: sanitizeUser(user)
-        })
-    } catch (error) {
-        return res.status(500).json({ message: 'Server crashed', error: error.message })
+            message: "Login successful",
+            user: {
+                _id: user._id,
+                name: user.name,
+                username: user.username,
+                email: user.email,
+                profileImage: user.profileImage,
+                bio: user.bio,
+                followers: user.followers || [],
+                followings: user.followings || []
+            }
+        });
+    } catch (err) {
+        console.log(err);
+        return res.status(500).json({ message: "Internal Server Error" });
     }
-}
+};
 
-export const getMe = async (req, res) => {
-    return res.status(200).json(sanitizeUser(req.user))
-}
+export const logoutUser = (req, res) => {
+    res.clearCookie("token", { httpOnly: true, sameSite: "lax", secure: false });
+    return res.status(200).json({ message: "Logged out successfully" });
+};
 
-export const logoutUser = async (req, res) => {
-    res.clearCookie('token', {
-        httpOnly: true
-    })
-
-    return res.status(200).json({ message: 'User Logged Out' })
-}
+export const getMe = async (req, res) => res.status(200).json(req.user);
 
 export const getUserProfile = async (req, res) => {
     try {
-        const { username } = req.params
-
+        const { username } = req.params;
         const userData = await User.findOne({ username })
-            .select('-password')
-            .populate('followers', 'name username profileImage')
-            .populate('followings', 'name username profileImage')
+            .select("-password")
+            .populate("followers", "name username profileImage")
+            .populate("followings", "name username profileImage");
+        if (!userData) return res.status(404).json({ message: "User Not Found" });
+        return res.status(200).json({ message: "User found", userData });
+    } catch (error) {
+        console.log(error);
+        return res.status(500).json({ message: "Internal Server Error" });
+    }
+};
 
-        if (!userData) {
-            return res.status(404).json({ message: 'User Not Found' })
+export const updateProfile = async (req, res, next) => {
+    try {
+        const userId = req.user._id;
+        const { name, username, email, bio } = req.body;
+
+        if (!name?.trim() || !username?.trim() || !email?.trim()) {
+            return res.status(400).json({ message: "Name, username and email are required" });
         }
 
-        return res.status(200).json({
-            message: 'User found',
-            userData
-        })
+        const cleanUsername = username.trim();
+        const normalizedEmail = email.trim().toLowerCase();
+
+        if (await User.findOne({ username: cleanUsername, _id: { $ne: userId } })) {
+            return res.status(409).json({ message: "Username already exists" });
+        }
+
+        if (await User.findOne({ email: normalizedEmail, _id: { $ne: userId } })) {
+            return res.status(409).json({ message: "Email already exists" });
+        }
+
+        const updates = {
+            name: name.trim(),
+            username: cleanUsername,
+            email: normalizedEmail,
+            bio: bio?.trim() || ""
+        };
+
+        if (req.file) {
+            const uploadedImage = await uploadToCloudinary(req.file.buffer);
+            updates.profileImage = uploadedImage.secure_url;
+        }
+
+        const updatedUser = await User.findByIdAndUpdate(userId, updates, {
+            new: true,
+            runValidators: true
+        }).select("-password");
+
+        return res.status(200).json({ message: "Profile updated successfully", user: updatedUser });
     } catch (error) {
-        console.log(error)
-        return res.status(500).json({ message: 'Internal Server Error' })
+        next(error);
     }
-}
+};
+
+export const testFileUpload = async (req, res, next) => {
+    try {
+        if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+        const result = await uploadToCloudinary(req.file.buffer);
+        return res.status(200).json({
+            message: "File uploaded to Cloudinary successfully",
+            file: { fieldname: req.file.fieldname, originalname: req.file.originalname, mimetype: req.file.mimetype, size: req.file.size },
+            cloudinary: { publicId: result.public_id, secureUrl: result.secure_url, resourceType: result.resource_type }
+        });
+    } catch (error) {
+        next(error);
+    }
+};
 
 export const followUser = async (req, res) => {
     try {
-        const currentUserId = req.user._id
-        const targetUserId = req.params.id
+        const currentUserId = req.user._id;
+        const targetUserId = req.params.id;
+        if (currentUserId.toString() === targetUserId.toString()) return res.status(409).json({ message: "You cannot follow yourself" });
+        const targetUser = await User.findById(targetUserId);
+        if (!targetUser) return res.status(404).json({ message: "No Target User Found" });
+        if (targetUser.followers.some((id) => id.toString() === currentUserId.toString())) return res.status(409).json({ message: "You are already following this user" });
+        await User.findByIdAndUpdate(currentUserId, { $addToSet: { followings: targetUserId } });
+        await User.findByIdAndUpdate(targetUserId, { $addToSet: { followers: currentUserId } });
 
-        if (currentUserId.toString() === targetUserId.toString()) {
-            return res.status(409).json({ message: 'You cannot follow yourself' })
-        }
+        const io = req.app.get("io");
+        createNotification(io, {
+            recipient: targetUserId,
+            sender: currentUserId,
+            type: "follow"
+        });
 
-        const targetUser = await User.findById(targetUserId)
-
-        if (!targetUser) {
-            return res.status(404).json({ message: 'No Target User Found' })
-        }
-
-        const alreadyFollowing = targetUser.followers.some(
-            (id) => id.toString() === currentUserId.toString()
-        )
-
-        if (alreadyFollowing) {
-            return res.status(409).json({ message: 'You are already following this user' })
-        }
-
-        await User.findByIdAndUpdate(currentUserId, {
-            $addToSet: { followings: targetUserId }
-        })
-
-        await User.findByIdAndUpdate(targetUserId, {
-            $addToSet: { followers: currentUserId }
-        })
-
-        return res.status(200).json({ message: 'User followed' })
+        return res.status(200).json({ message: "User followed" });
     } catch (error) {
-        console.log(error)
-        return res.status(500).json({ message: 'Internal Server Error' })
+        console.log(error);
+        return res.status(500).json({ message: "Internal Server Error" });
     }
-}
+};
 
 export const unfollowUser = async (req, res) => {
     try {
-        const currentUserId = req.user._id
-        const targetUserId = req.params.id
-
-        if (currentUserId.toString() === targetUserId.toString()) {
-            return res.status(409).json({ message: 'You cannot unfollow yourself' })
-        }
-
-        const targetUser = await User.findById(targetUserId)
-
-        if (!targetUser) {
-            return res.status(404).json({ message: 'No Target User Found' })
-        }
-
-        await User.findByIdAndUpdate(currentUserId, {
-            $pull: { followings: targetUserId }
-        })
-
-        await User.findByIdAndUpdate(targetUserId, {
-            $pull: { followers: currentUserId }
-        })
-
-        return res.status(200).json({ message: 'User unfollowed' })
+        const currentUserId = req.user._id;
+        const targetUserId = req.params.id;
+        if (currentUserId.toString() === targetUserId.toString()) return res.status(409).json({ message: "You cannot unfollow yourself" });
+        const targetUser = await User.findById(targetUserId);
+        if (!targetUser) return res.status(404).json({ message: "No Target User Found" });
+        await User.findByIdAndUpdate(currentUserId, { $pull: { followings: targetUserId } });
+        await User.findByIdAndUpdate(targetUserId, { $pull: { followers: currentUserId } });
+        return res.status(200).json({ message: "User unfollowed" });
     } catch (error) {
-        console.log(error)
-        return res.status(500).json({ message: 'Internal Server Error' })
+        console.log(error);
+        return res.status(500).json({ message: "Internal Server Error" });
     }
-}
+};
 
-// export const testUpload = async (req, res) => {
-//     try {
-//         const uploadedImage = await uploadToCloudinary(req.file.buffer)
-//         res.send(uploadedImage.secure_url)
-//     } catch (error) {
-//         return res.status(500).json({ message: 'Internal Server Error' })
-//     }
-// }
-
-
-// UPDATED: Persist profile fields and optionally upload a new profile image.
-export const updateProfile = async (req, res) => {
+export const searchUsers = async (req, res, next) => {
     try {
-        const { name, username, email, bio } = req.body
-
-        if (username) {
-            const usernameExists = await User.findOne({
-                username,
-                _id: { $ne: req.user._id }
-            })
-
-            if (usernameExists) {
-                return res.status(409).json({ message: 'Username Already Exists' })
-            }
+        const query = req.query.q?.trim() || "";
+        if (!query) {
+            return res.status(200).json({ users: [] });
         }
 
-        if (email) {
-            const emailExists = await User.findOne({
-                email,
-                _id: { $ne: req.user._id }
-            })
+        const currentUserId = req.user?._id;
+        const users = await User.find({
+            $or: [
+                { username: { $regex: query, $options: "i" } },
+                { name: { $regex: query, $options: "i" } }
+            ]
+        })
+            .select("name username profileImage bio followers followings")
+            .limit(15)
+            .lean();
 
-            if (emailExists) {
-                return res.status(409).json({ message: 'Email Already Exists' })
-            }
-        }
+        const formatted = users.map((u) => ({
+            ...u,
+            followersCount: u.followers?.length || 0,
+            followingsCount: u.followings?.length || 0,
+            isFollowing: currentUserId
+                ? (u.followers || []).some((fId) => fId.toString() === currentUserId.toString())
+                : false,
+            isSelf: currentUserId ? u._id.toString() === currentUserId.toString() : false
+        }));
 
-        const updateData = {}
+        return res.status(200).json({ users: formatted });
+    } catch (error) {
+        next(error);
+    }
+};
 
-        if (name !== undefined) updateData.name = name
-        if (username !== undefined) updateData.username = username
-        if (email !== undefined) updateData.email = email
-        if (bio !== undefined) updateData.bio = bio
+export const getSuggestedUsers = async (req, res, next) => {
+    try {
+        const currentUserId = req.user._id;
+        const currentUser = await User.findById(currentUserId).select("followings");
+        const alreadyFollowing = [currentUserId, ...(currentUser?.followings || [])];
 
-        if (req.file) {
-            // UPDATED: Multer gives us a Buffer; Cloudinary gives us the permanent image URL.
-          const uploadedImage = await uploadToCloudinary(req.file.buffer)
-
-            updateData.profileImage = uploadedImage.secure_url
-        }
-
-        const updatedUser = await User.findByIdAndUpdate(
-            req.user._id,
-            { $set: updateData },
-            { new: true, runValidators: true }
-        )
+        const suggestions = await User.find({
+            _id: { $nin: alreadyFollowing }
+        })
+            .select("name username profileImage bio followers")
+            .limit(6)
+            .lean();
 
         return res.status(200).json({
-            message: 'Profile updated successfully',
-            userData: sanitizeUser(updatedUser)
-        })
+            suggestions: suggestions.map((u) => ({
+                ...u,
+                followersCount: u.followers?.length || 0
+            }))
+        });
     } catch (error) {
-        console.log(error)
-        return res.status(500).json({
-            message: 'Failed to update profile',
-            error: error.message
-        })
+        next(error);
     }
-}
+};

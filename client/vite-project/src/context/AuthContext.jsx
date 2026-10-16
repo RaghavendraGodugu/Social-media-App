@@ -1,45 +1,40 @@
-import { createContext, useContext, useEffect, useState } from 'react'
-import { axiosInstance } from '../axiosCalls/axios'
+import { createContext, useContext, useEffect } from "react";
+import { useDispatch, useSelector } from "react-redux";
+import axiosInstance from "../axiosCalls/axios";
+import {
+  clearCurrentUser,
+  hydrateCurrentUser,
+  setCurrentUser,
+} from "../redux/authSlice";
 
-const AuthContext = createContext(null)
+const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-    const [user, setUser] = useState(null)
-    const [loading, setLoading] = useState(true)
+  const dispatch = useDispatch();
+  const user = useSelector((state) => state.auth.user);
+  const loading = useSelector((state) => state.auth.loading);
 
-    useEffect(() => {
-        let mounted = true
+  useEffect(() => {
+    dispatch(hydrateCurrentUser());
+  }, [dispatch]);
 
-        const fetchUser = async () => {
-            try {
-                const response = await axiosInstance.get('/users/me')
-                if (!mounted) return
-                setUser(response.data)
-            } catch (error) {
-                if (!mounted) return
-                setUser(null)
-            } finally {
-                if (mounted) setLoading(false)
-            }
-        }
+  const setUser = (nextUser) => {
+    dispatch(setCurrentUser(nextUser));
+  };
 
-        fetchUser()
-
-        return () => {
-            mounted = false
-        }
-    }, [])
-
-    const logout = async () => {
-        await axiosInstance.post('/users/logout')
-        setUser(null)
+  const logout = async () => {
+    try {
+      await axiosInstance.post("/users/logout");
+    } finally {
+      dispatch(clearCurrentUser());
     }
+  };
 
-    return (
-        <AuthContext.Provider value={{ user, setUser, loading, logout }}>
-            {children}
-        </AuthContext.Provider>
-    )
-}
+  return (
+    <AuthContext.Provider value={{ user, setUser, loading, logout }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
 
-export const useAuth = () => useContext(AuthContext)
+export const useAuth = () => useContext(AuthContext);

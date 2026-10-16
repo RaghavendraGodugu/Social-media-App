@@ -26,8 +26,8 @@ dotenv.config({
 // Normalize environment variables for casing consistency
 process.env.dbUrl = process.env.dbUrl || process.env.dbURL || process.env.MONGO_URI;
 process.env.dbURL = process.env.dbUrl;
-process.env.JWT_SECRET = process.env.JWT_SECRET || process.env.jwt_secret;
-process.env.jwt_secret = process.env.JWT_SECRET;
+process.env.JWT_SECRET = process.env.JWT_SECRET || process.env.jwt_secret, { expiresIn: "7d" };
+process.env.jwt_secret = process.env.JWT_SECRET, { expiresIn: "7d" };
 
 const requiredEnvVars = [
     "dbUrl",
